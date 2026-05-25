@@ -1,0 +1,10 @@
+{
+  "name": "ListSorter",
+  "desc": "Lasso a handwritten or typed list, sort it alphabetically, and insert it with your choice of format and alignment.",
+  "iconPath": "assets/list.png",
+  "versionName": "1.0.0-beta",
+  "versionCode": "1",
+  "pluginID": "m4r7x2p9nk1w8czq",
+  "pluginKey": "ListSorter",
+  "jsMainPath": "index"
+}
