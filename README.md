@@ -1,3 +1,7 @@
+
+
+https://github.com/user-attachments/assets/db8c640f-46e3-4d78-ac34-29e8efda3315
+
 # sn-list-sorter
 
 A Supernote plugin that sorts a recognized or typed list alphabetically and inserts it back onto the page with your choice of formatting. Handwritten items must be converted to text using **Recognize as Text** before the plugin can read them.
