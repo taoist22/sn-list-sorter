@@ -1,0 +1,150 @@
+// Audit reproductions of the delivered 1.0.1-beta. Assertions describe defects,
+// not acceptable release behavior. They are kept outside the release test suite.
+jest.mock('sn-plugin-lib', () => ({
+  PluginManager: {
+    init: jest.fn().mockResolvedValue(undefined),
+    registerButton: jest.fn().mockResolvedValue(true),
+    registerButtonListener: jest.fn(),
+    hasPermission: jest.fn(), requestPermission: jest.fn(),
+    registerPluginLifeListener: jest.fn(() => ({remove: jest.fn()})),
+    closePluginView: jest.fn(),
+  },
+  PluginCommAPI: {
+    getLassoRect: jest.fn(), getCurrentFilePath: jest.fn(), getCurrentPageNum: jest.fn(),
+    createElement: jest.fn(), recycleElement: jest.fn(), reloadFile: jest.fn(),
+  },
+  PluginFileAPI: {getElements: jest.fn(), getPageSize: jest.fn(), insertElements: jest.fn(), modifyElements: jest.fn()},
+  PluginNoteAPI: {getLassoText: jest.fn(), saveCurrentNote: jest.fn()},
+}));
+import {PluginManager, PluginCommAPI, PluginFileAPI, PluginNoteAPI} from 'sn-plugin-lib';
+import {detectLassoMode, insertSortedList, formatGroup} from '../src/listOps';
+import {requireFileReadPermission} from '../src/pluginPermissions';
+import type {InsertOptions, LassoData} from '../src/types';
+const config = require('../PluginConfig.json');
+const manager = PluginManager as jest.Mocked<typeof PluginManager>;
+const comm = PluginCommAPI as jest.Mocked<typeof PluginCommAPI>;
+const file = PluginFileAPI as jest.Mocked<typeof PluginFileAPI>;
+const note = PluginNoteAPI as jest.Mocked<typeof PluginNoteAPI>;
+const data: LassoData = {mode: 'typed', items: ['Apple'], lassoRect: {left: 40, top: 40, right: 200, bottom: 100}};
+const options: InsertOptions = {format: 'none', alignment: 'left', fontSize: 32, bold: false, outputMode: 'single'};
+const created: any[] = [];
+beforeEach(() => {
+  jest.clearAllMocks();
+  created.length = 0;
+  manager.hasPermission.mockResolvedValue(1);
+  comm.getCurrentFilePath.mockResolvedValue({success: true, result: '/note'});
+  comm.getCurrentPageNum.mockResolvedValue({success: true, result: 0});
+  (comm.getLassoRect as jest.Mock).mockResolvedValue({success: true, result: data.lassoRect});
+  comm.createElement.mockImplementation(async () => {
+    const el = {type: 500, uuid: `created-${created.length}`, pageNum: 0, layerNum: 0, textBox: {}};
+    created.push(el);
+    return {success: true, result: el};
+  });
+  file.getPageSize.mockResolvedValue({success: true, result: {width: 1404, height: 1872}});
+  file.getElements.mockResolvedValue({success: true, result: []});
+  file.insertElements.mockResolvedValue({success: true, result: [1]});
+  file.modifyElements.mockResolvedValue({success: true, result: [1]});
+  note.saveCurrentNote.mockResolvedValue({success: true, result: true});
+  (note.getLassoText as jest.Mock).mockResolvedValue({success: true, result: [{textContentFull: 'Apple'}]});
+  comm.reloadFile.mockResolvedValue({success: true, result: true});
+});
+
+test('A01: manifest declares neither of the requested permissions', () => {
+  expect(config['uses-permissions']).toBeUndefined();
+});
+test('A02: documented error 1500 is presented as user denial', async () => {
+  const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+  manager.hasPermission.mockResolvedValue(0);
+  manager.requestPermission.mockImplementation(async permission => {
+    if (!config['uses-permissions']?.includes(permission)) {
+      throw Object.assign(new Error('Permission not declared'), {code: 1500});
+    }
+    return 1;
+  });
+  await expect(requireFileReadPermission()).rejects.toThrow('File read access was not allowed');
+  expect(log).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({code: 1500}));
+  log.mockRestore();
+});
+test('A03: actual entry registration excludes handwriting', () => {
+  require('../index');
+  expect(manager.registerButton).toHaveBeenCalledWith(2, ['NOTE'], expect.objectContaining({editDataTypes: [3]}));
+});
+test('A04: a page read failure blocks otherwise readable selected text', async () => {
+  file.getElements.mockResolvedValue({success: false, error: {code: 206, message: 'Trail cache data is too large'}});
+  await expect(detectLassoMode()).rejects.toThrow('Trail cache data is too large');
+  expect(note.getLassoText).not.toHaveBeenCalled();
+});
+test('A05: overlapping unselected group captures ordinary selected text', async () => {
+  file.getElements.mockResolvedValue({success: true, result: [{uuid: 'unselected', userData: '{"gid":"other"}', textBox: {textRect: data.lassoRect}}]});
+  await expect(detectLassoMode()).resolves.toEqual({kind: 'group', data: {groupId: 'other', filePath: '/note', pageNum: 0}});
+  expect(note.getLassoText).not.toHaveBeenCalled();
+});
+test('A06: neither page reads nor created elements are recycled', async () => {
+  file.getElements.mockResolvedValue({success: true, result: [{uuid: 'ink', type: 100}]});
+  await detectLassoMode();
+  await insertSortedList(data, options);
+  expect(comm.recycleElement).not.toHaveBeenCalled();
+});
+test('A07: duplicate uuids are submitted twice for group modification', async () => {
+  const el = {uuid: 'same', userData: '{"gid":"g","fs":32}', textBox: {textContentFull: 'Apple', textRect: data.lassoRect}};
+  file.getElements.mockResolvedValue({success: true, result: [el, {...el, textBox: {...el.textBox}}]});
+  await formatGroup({groupId: 'g', filePath: '/note', pageNum: 0}, 32, false);
+  expect(file.modifyElements.mock.calls[0][2]).toHaveLength(2);
+});
+test('A08: auto-width mode and non-editable flag are sent on every insertion', async () => {
+  await insertSortedList(data, {...options, alignment: 'right'});
+  expect(created[0].textBox).toMatchObject({textFrameWidthType: 1, textEditable: 1});
+});
+test('A09: a long line extends beyond the page width', async () => {
+  await insertSortedList({...data, items: ['W'.repeat(150)]}, options);
+  expect(created[0].textBox.textRect.right).toBeGreaterThan(1404);
+});
+test('A10: a long list extends beyond the page height', async () => {
+  await insertSortedList({...data, items: Array(40).fill('Apple')}, options);
+  expect(created[0].textBox.textRect.bottom).toBeGreaterThan(1872);
+});
+test('A11: lettering emits punctuation after Z', async () => {
+  await insertSortedList({...data, items: Array(27).fill('Item')}, {...options, format: 'lettered'});
+  expect(created[0].textBox.textContentFull.split('\n')[26]).toBe('[. Item');
+});
+test('A12: successful response with zero modified elements is treated as success', async () => {
+  file.getElements.mockResolvedValue({success: true, result: [{uuid: 'one', userData: '{"gid":"g"}', textBox: {textContentFull: 'Apple', textRect: data.lassoRect}}]});
+  file.modifyElements.mockResolvedValue({success: true, result: []});
+  await expect(formatGroup({groupId: 'g', filePath: '/note', pageNum: 0}, 32, false)).resolves.toBeUndefined();
+  expect(comm.reloadFile).toHaveBeenCalled();
+});
+test('A13: launching without a button event leaves a spinner instead of setup', async () => {
+  const React = require('react');
+  const renderer = require('react-test-renderer');
+  const App = require('../App').default;
+  let tree: any;
+  await renderer.act(async () => { tree = renderer.create(React.createElement(App)); });
+  const listener = manager.registerPluginLifeListener.mock.calls.at(-1)![0];
+  await renderer.act(async () => {listener.onMsg({state: 3}); listener.onMsg({state: 2});});
+  expect(JSON.stringify(tree.toJSON())).toContain('Reading selection…');
+  await renderer.act(async () => tree.unmount());
+});
+
+
+test('A16: insertion uses a newly current note rather than the note selected for sorting', async () => {
+  await detectLassoMode();
+  comm.getCurrentFilePath.mockResolvedValue({success: true, result: '/different-note'});
+  await insertSortedList(data, options);
+  expect(file.insertElements.mock.calls[0][0]).toBe('/different-note');
+});
+
+test('A17: stop/start loses the sort screen without a fresh button event', async () => {
+  const React = require('react');
+  const renderer = require('react-test-renderer');
+  const router = require('../src/pluginRouter');
+  const pending = jest.spyOn(router, 'getLastButtonEvent').mockReturnValue({id: 200});
+  const App = require('../App').default;
+  let tree: any;
+  await renderer.act(async () => { tree = renderer.create(React.createElement(App)); });
+  expect(JSON.stringify(tree.toJSON())).toContain('Insert Sorted');
+  const listener = manager.registerPluginLifeListener.mock.calls.at(-1)![0];
+  await renderer.act(async () => {listener.onMsg({state: 3}); listener.onMsg({state: 2});});
+  expect(JSON.stringify(tree.toJSON())).toContain('Reading selection…');
+  await renderer.act(async () => tree.unmount());
+  pending.mockRestore();
+});

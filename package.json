@@ -1,6 +1,6 @@
 {
   "name": "ListSorter",
-  "version": "1.0.0-beta",
+  "version": "1.1.0-beta",
   "description": "Lasso a handwritten or typed list, sort it alphabetically, and insert it with your choice of format and alignment.",
   "private": true,
   "scripts": {
@@ -8,12 +8,18 @@
     "ios": "react-native run-ios",
     "lint": "eslint .",
     "start": "react-native start",
-    "test": "jest"
+    "test": "jest",
+    "typecheck": "tsc --noEmit",
+    "patch:metro-watchers": "node tools/patch-metro-watchers.js",
+    "build": "npm run patch:metro-watchers && bash buildPlugin.sh",
+    "test:coverage": "jest --coverage --runInBand --watchman=false",
+    "validate:package": "node tools/validate-plugin-package.js",
+    "verify:release": "npm run typecheck && npm run lint && npm run test:coverage && npm run build && npm run validate:package"
   },
   "dependencies": {
     "react": "19.0.0",
     "react-native": "0.79.2",
-    "sn-plugin-lib": "^0.1.43"
+    "sn-plugin-lib": "0.1.65"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

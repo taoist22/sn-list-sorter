@@ -1,0 +1,19 @@
+{
+  "artifact": "/Users/ctreatherford/supernote-plugins/sn-list-sorter/build/outputs/ListSorter.snplg",
+  "bytes": 277920,
+  "sha256": "b6a4cf6280e5088bf09002f240c7efe21b03456c07dbf2cba3b9f12afe1aec18",
+  "manifest": {
+    "name": "ListSorter",
+    "desc": "Lasso a handwritten or typed list, sort it alphabetically, and insert it with your choice of format and alignment.",
+    "iconPath": "/list.png",
+    "versionName": "1.0.1-beta",
+    "versionCode": "2",
+    "pluginID": "m4r7x2p9nk1w8czq",
+    "pluginKey": "ListSorter",
+    "jsMainPath": "index"
+  },
+  "zipIntegrityError": null,
+  "sdkVersion": "0.1.65",
+  "declaredPermissions": [],
+  "nativePackageRequired": false
+}

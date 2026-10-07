@@ -675,6 +675,10 @@ main() {
     local project_root="${1:-$(pwd)}"
     get_package_info "$project_root"
 
+    # Always bundle into clean output directories; never ship stale artifacts.
+    node "$project_root/tools/clean-build.js" "$project_root"
+    node "$project_root/tools/patch-metro-watchers.js" "$project_root"
+
     local gen_dir
     gen_dir="$(ensure_build_generated_dir "$project_root")"
 
@@ -715,9 +719,10 @@ main() {
         update_plugin_config_packages "$project_root" "$gen_dir" "$all_pkgs"
 
         if build_android_apk "$project_root" "$gen_cfg"; then
-            copy_apk_and_update_config "$project_root" "$gen_dir" "$gen_cfg" || true
+            copy_apk_and_update_config "$project_root" "$gen_dir" "$gen_cfg" || return 1
         else
             write_color_output "APK build failed" "Red"
+            return 1
         fi
     else
         write_color_output "Build conditions not met; skipping native build and reactPackages update" "Yellow"

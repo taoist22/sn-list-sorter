@@ -1,201 +1,245 @@
-import React, {useEffect, useState, useCallback} from 'react';
-import {ActivityIndicator, StyleSheet, Text, View} from 'react-native';
-import {PluginManager} from 'sn-plugin-lib';
-import {installPluginRouter, getLastButtonEvent, subscribeToButtonEvents} from './src/pluginRouter';
-import SortPanel from './src/SortPanel';
-import GroupPanel from './src/GroupPanel';
+import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {
+  ActivityIndicator,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import {PluginManager} from 'sn-plugin-lib';
+import {
+  BUTTON_ID_LASSO,
+  consumeLastButtonEvent,
+  subscribeToButtonEvents,
+} from './src/pluginRouter';
+import {
+  cancelRecognition,
+  CancelledError,
   detectLassoMode,
+  formatGroup,
   insertSortedList,
   realignList,
-  formatGroup,
 } from './src/listOps';
-import type {AppScreen, InsertOptions} from './src/types';
-
-installPluginRouter();
-
+import {errorMessage} from './src/pluginPermissions';
+import {versionName} from './PluginConfig.json';
+import SortPanel from './src/SortPanel';
+import GroupPanel from './src/GroupPanel';
+import SetupPanel from './src/SetupPanel';
+import type {AppScreen, InsertOptions, OperationToken} from './src/types';
 export default function App() {
-  const [screen, setScreen] = useState<AppScreen>({kind: 'detecting'});
+  const [screen, setScreen] = useState<AppScreen>({kind: 'setup'});
   const [busy, setBusy] = useState(false);
-
-  // Run detection whenever the lasso button fires
-  const runDetect = useCallback(async () => {
-    setScreen({kind: 'detecting'});
-    try {
-      const result = await detectLassoMode();
-      if (result.kind === 'sort') {
-        setScreen({kind: 'sort', data: result.data});
-      } else if (result.kind === 'group') {
-        setScreen({kind: 'group', data: result.data});
-      } else {
-        setScreen({kind: 'error', message: result.reason});
+  const active = useRef<OperationToken | null>(null);
+  const mounted = useRef(true);
+  const run = useCallback(
+    async (
+      kind: 'read' | 'write',
+      action: (token: OperationToken) => Promise<AppScreen>,
+    ) => {
+      if (active.current) {
+        return;
       }
-    } catch (e) {
-      setScreen({kind: 'error', message: e instanceof Error ? e.message : 'Detection failed'});
-    }
-  }, []);
-
+      const token: OperationToken = {cancelled: false};
+      active.current = token;
+      setBusy(true);
+      setScreen(
+        kind === 'read'
+          ? {kind: 'detecting'}
+          : {kind: 'working', message: 'Updating list…'},
+      );
+      try {
+        const next = await action(token);
+        if (mounted.current && !token.cancelled) {
+          setScreen(next);
+          if (kind === 'write' && !(await PluginManager.closePluginView())) {
+            throw new Error(
+              'The list was updated, but the view could not close. Close it manually to inspect the note.',
+            );
+          }
+        }
+      } catch (error) {
+        if (
+          mounted.current &&
+          !token.cancelled &&
+          !(error instanceof CancelledError)
+        ) {
+          setScreen({kind: 'error', message: errorMessage(error)});
+        }
+      } finally {
+        if (active.current === token) {
+          active.current = null;
+        }
+        if (mounted.current) {
+          setBusy(false);
+          if (token.cancelled) {
+            setScreen({kind: 'setup'});
+          }
+        }
+      }
+    },
+    [],
+  );
+  const read = useCallback(
+    () => run('read', token => detectLassoMode(token)),
+    [run],
+  );
   useEffect(() => {
-    // Consume button that fired before this component mounted
-    const pending = getLastButtonEvent();
-    if (pending) runDetect();
-
-    // Listen for buttons fired while mounted
-    const unsub = subscribeToButtonEvents(() => runDetect());
-
-    const lifeSub = PluginManager.addPluginLifeListener({
-      onStart() {},
-      onStop() {
-        setScreen({kind: 'detecting'});
-        setBusy(false);
+    mounted.current = true;
+    const handle = (event: {id: number}) => {
+      if (active.current) {
+        return;
+      }
+      if (event.id === BUTTON_ID_LASSO) {
+        read();
+      } else {
+        setScreen({kind: 'setup'});
+      }
+    };
+    const unsub = subscribeToButtonEvents(handle);
+    const pending = consumeLastButtonEvent();
+    if (pending) {
+      handle(pending);
+    }
+    const life = PluginManager.registerPluginLifeListener({
+      onMsg(message: {state?: number}) {
+        // Do not discard UI on pause: permission dialogs may temporarily cover it.
+        // A new lasso event replaces the selection; a cold mount starts at setup.
+        if (
+          message.state === 5 &&
+          active.current &&
+          !active.current.committing
+        ) {
+          active.current.cancelled = true;
+        }
       },
     });
-
     return () => {
+      mounted.current = false;
+      if (active.current && !active.current.committing) {
+        active.current.cancelled = true;
+      }
       unsub();
-      lifeSub.remove();
+      life.remove();
     };
-  }, [runDetect]);
-
-  // ── Handlers ──
-
-  const handleConfirmSort = useCallback(
-    async (options: InsertOptions) => {
-      if (screen.kind !== 'sort' || busy) return;
-      const data = screen.data;
-      setBusy(true);
-      setScreen({kind: 'working', message: 'Inserting sorted list…'});
-      try {
-        await insertSortedList(data, options);
-        PluginManager.closePluginView();
-      } catch (e) {
-        setScreen({kind: 'error', message: e instanceof Error ? e.message : 'Insert failed'});
-      } finally {
-        setBusy(false);
-      }
-    },
-    [screen, busy],
-  );
-
-  const handleRealign = useCallback(async () => {
-    if (screen.kind !== 'group' || busy) return;
-    const data = screen.data;
-    setBusy(true);
-    setScreen({kind: 'working', message: 'Realigning…'});
-    try {
-      await realignList(data);
-      PluginManager.closePluginView();
-    } catch (e) {
-      setScreen({kind: 'error', message: e instanceof Error ? e.message : 'Realign failed'});
-    } finally {
-      setBusy(false);
+  }, [read]);
+  const close = () => {
+    if (active.current) {
+      return;
     }
-  }, [screen, busy]);
-
-  const handleFormat = useCallback(
-    async (fontSize: number, bold: boolean) => {
-      if (screen.kind !== 'group' || busy) return;
-      const data = screen.data;
-      setBusy(true);
-      setScreen({kind: 'working', message: 'Formatting group…'});
-      try {
-        await formatGroup(data, fontSize, bold);
-        PluginManager.closePluginView();
-      } catch (e) {
-        setScreen({kind: 'error', message: e instanceof Error ? e.message : 'Format failed'});
-      } finally {
-        setBusy(false);
-      }
-    },
-    [screen, busy],
-  );
-
-  const handleCancel = useCallback(() => {
-    PluginManager.closePluginView();
-  }, []);
-
-  // ── Render ──
-
-  if (screen.kind === 'detecting' || screen.kind === 'working') {
-    const message =
-      screen.kind === 'detecting' ? 'Reading selection…' : screen.message;
-    return (
-      <View style={styles.centered}>
-        <View style={styles.busyCard}>
-          <ActivityIndicator size="large" color="#000000" />
-          <Text style={styles.busyText}>{message}</Text>
-        </View>
-      </View>
+    setScreen({kind: 'setup'});
+    PluginManager.closePluginView().catch(error =>
+      setScreen({kind: 'error', message: errorMessage(error)}),
     );
+  };
+  async function cancel() {
+    const token = active.current;
+    if (!token || token.committing) {
+      return;
+    }
+    token.cancelled = true;
+    try {
+      await cancelRecognition();
+    } catch (error) {
+      console.error('[ListSorter]', errorMessage(error));
+    }
   }
-
-  if (screen.kind === 'error') {
-    return (
-      <View style={styles.centered}>
-        <View style={styles.errorCard}>
-          <Text style={styles.errorTitle}>Could not process selection</Text>
-          <Text style={styles.errorMessage}>{screen.message}</Text>
-        </View>
-      </View>
-    );
+  if (screen.kind === 'setup') {
+    return <SetupPanel onRead={() => read()} onClose={close} />;
   }
-
   if (screen.kind === 'sort') {
+    const data = screen.data;
     return (
       <SortPanel
-        data={screen.data}
-        onConfirm={handleConfirmSort}
-        onCancel={handleCancel}
+        data={data}
         busy={busy}
+        onCancel={close}
+        onConfirm={(options: InsertOptions, items: string[]) => {
+          run('write', async token => {
+            await insertSortedList({...data, items}, options, token);
+            return {kind: 'setup'};
+          });
+        }}
       />
     );
   }
-
   if (screen.kind === 'group') {
+    const data = screen.data;
     return (
       <GroupPanel
-        data={screen.data}
-        onRealign={handleRealign}
-        onFormat={handleFormat}
-        onCancel={handleCancel}
+        data={data}
         busy={busy}
+        onCancel={close}
+        onRealign={() =>
+          run('write', async token => {
+            await realignList(data, token);
+            return {kind: 'setup'};
+          })
+        }
+        onFormat={(size, bold) =>
+          run('write', async token => {
+            await formatGroup(data, size, bold, token);
+            return {kind: 'setup'};
+          })
+        }
       />
     );
   }
-
-  return null;
+  return (
+    <View style={styles.center}>
+      <View style={styles.card}>
+        <Text style={styles.title}>ListSorter {versionName}</Text>
+        {screen.kind === 'error' ? (
+          <>
+            <Text selectable style={styles.text}>
+              {screen.message}
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setScreen({kind: 'setup'})}
+              style={styles.button}>
+              <Text>Permissions and settings</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={close}
+              style={styles.button}>
+              <Text>Close</Text>
+            </Pressable>
+          </>
+        ) : (
+          <>
+            <ActivityIndicator color="black" />
+            <Text style={styles.text}>
+              {screen.kind === 'detecting'
+                ? 'Reading or recognizing selection…'
+                : screen.message}
+            </Text>
+            {screen.kind === 'detecting' && (
+              <Pressable
+                accessibilityRole="button"
+                onPress={cancel}
+                style={styles.button}>
+                <Text>Cancel</Text>
+              </Pressable>
+            )}
+          </>
+        )}
+      </View>
+    </View>
+  );
 }
-
-// ─── Styles ───────────────────────────────────────────────────────────────────
-
 const styles = StyleSheet.create({
-  centered: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'transparent',
-  },
-  busyCard: {
-    backgroundColor: '#FFFFFF',
+  center: {flex: 1, justifyContent: 'center', alignItems: 'center'},
+  card: {
+    width: '90%',
+    maxWidth: 520,
+    padding: 24,
+    backgroundColor: 'white',
+    borderWidth: 2,
     borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: '#000000',
-    padding: 32,
-    alignItems: 'center',
     gap: 16,
-    minWidth: 240,
   },
-  busyText: {fontSize: 16, color: '#555555'},
-  errorCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: '#000000',
-    padding: 28,
-    alignItems: 'center',
-    gap: 10,
-    maxWidth: 380,
-  },
-  errorTitle: {fontSize: 17, fontWeight: '700', color: '#CC0000'},
-  errorMessage: {fontSize: 15, color: '#555555', textAlign: 'center'},
+  title: {fontSize: 20, fontWeight: 'bold', color: 'black'},
+  text: {fontSize: 16, color: 'black'},
+  button: {padding: 14, borderWidth: 1, borderRadius: 6, alignItems: 'center'},
 });

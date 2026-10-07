@@ -1,109 +1,58 @@
-
-
 https://github.com/user-attachments/assets/db8c640f-46e3-4d78-ac34-29e8efda3315
 
-# sn-list-sorter
+# ListSorter 1.1.0-beta
 
-A Supernote plugin that sorts a recognized or typed list alphabetically and inserts it back onto the page with your choice of formatting. Handwritten items must be converted to text using **Recognize as Text** before the plugin can read them.
+Sort selected handwriting or typed text in a Supernote note. Review the recognized lines, choose sorting and formatting options, and insert a new list. The original selection stays on the page.
 
----
+## Firmware and permissions
 
-## Requirements
+Targets the permission APIs introduced in **Chauvet 3.29.43 beta** (Manta/Nomad) and **2.26.40 beta** (A5 X/A6 X), also present in the replacement **3.29.44 / 2.26.41** builds. Ratta replaced the earlier builds to fix sticker loss; this plugin does not require that earlier firmware to be installed.
 
-- Supernote Nomad or Manta running **Chauvet 3.15.27** or later
-- The `.snplg` file transferred to your device and installed
+Built with `sn-plugin-lib` **0.1.65** and React Native **0.79.2**. The manifest declares only `plugin.permission.FILE:READ` and `plugin.permission.FILE:WRITE`. Read access is required for selections; write access is requested for insertion, group editing, and saving the note to read a group accurately. No network or file-delete permission is requested.
 
----
+Local tests use the actual SDK JavaScript with a simulated Android bridge. Recognition quality, native rendering, selection availability, and permission dialogs still require testing on a device.
 
-## How to Use
+## Open ListSorter
 
-### Step 1 — Recognize your handwriting as text
+- **Lasso:** select handwriting, text boxes, or both in a NOTE; tap **Sort List**.
+- **Note toolbar:** open **ListSorter** to see version, permissions, registration status, and the current lasso button state.
+- **Plugin settings entry:** opens the same setup screen without needing a selection.
 
-The plugin works on text the device has already recognized, not raw ink strokes.
+If the lasso button is unavailable, open the setup entry and check its status. Unsupported selection types (images, links, shapes) are not sortable.
 
-1. Write your list items on the page (one item per line works best)
-2. Lasso the handwritten items
-3. Tap **Recognize as Text** in the lasso menu
+## Sort and insert
 
-The device will convert your ink to typed text in place. You will see the items redisplayed as a text block.
+1. Lasso the list. Handwriting is recognized directly; converting with the device's **Recognize as Text** beforehand is also supported.
+2. Review and edit the lines. Each nonempty line becomes one item.
+3. Choose A–Z or Z–A. **Natural numbers** orders Item 2 before Item 10. Optional controls remove existing prefixes or exact duplicate items; both are off by default.
+4. Choose plain, bulleted, checkbox, numbered, or lettered output; lettering continues through AA, AB, and beyond. Choose font size, bold, and alignment.
+5. Choose a single multiline box or individual boxes. Individual items can later be realigned.
+6. Inspect the wrapped text and page-position preview, then tap **Insert sorted list**.
 
-### Step 2 — Sort and format
+The layout tries space below, beside, or above the original selection. It wraps long lines with explicit breaks and uses shared fixed box widths. **Fit to space** may reduce text down to 16 px; the preview shows the chosen size. If no layout fits, insertion is disabled: use fewer items or shorten the text. No new pages are created automatically. Glyph spacing is estimated conservatively; the diagram shows the actual planned box positions, but native font rendering can differ.
 
-1. Lasso the recognized text block (or blocks)
-2. Tap the **List Sorter** plugin button in the lasso menu
-3. The plugin reads the items, sorts them alphabetically, and shows the **Sort Panel**
-4. Configure your options (see below)
-5. Tap **Insert Sorted** — the sorted list appears on the page below your original selection
+## Existing list groups
 
----
+Select items from one ListSorter group, without unrelated objects, and reopen Sort List. The plugin identifies groups from selected elements instead of overlapping rectangles. Only an identified group triggers a current-page scan.
 
-## Sort Options
+- **Realign** appears for groups with multiple boxes. It preserves text style and uses the group's existing widths.
+- **Format Group** starts with current font size and bold state. Mixed values remain unchanged unless you choose a replacement.
+- Groups created by 1.0.x are recognized by their legacy metadata and migrated when edited.
 
-### Format
-Adds a prefix to each item in the sorted list.
+A group that cannot fit after formatting is rejected before any element modification. Group handles are deduplicated and recycled after use. The current file/page is checked before writes. If an operation reports a partial write or reload failure, inspect the note before repeating it; some content may already have changed.
 
-| Option | Example |
-|--------|---------|
-| None | Item |
-| Bullet | • Item |
-| Checkbox | ☐ Item |
-| Numbered | 1. Item |
-| Lettered | A. Item |
+## Validation and installation
 
-### Alignment
-Sets the text alignment within each box: **Left**, **Center**, or **Right**.
+Before handing off an artifact, run:
 
-### Font Size
-Choose from **24, 28, 32, 36, or 40** pt.
+```sh
+npm run verify:release
+```
 
-### Style
-Toggle **Bold** on or off.
+This runs TypeScript, lint, tests with coverage, a clean build, and package validation. Both source and packaged manifests must contain the required permissions; the validator also checks identity, version, icon, bundle bytes, ZIP integrity, and native-package presence when required. ListSorter currently has no extra native code and uses the host SDK, so its valid package is JavaScript-only.
 
-### Insert As
+Output: `build/outputs/ListSorter.snplg`. Manually copy it to the device and update the plugin through the device's plugin settings. The plugin ID is unchanged.
 
-This is the most important setting. It controls how the sorted list is written to the page.
+Before relying on the update, test first-use permissions, deny/allow-once/always-allow, ink and text selections, both output modes, existing groups, cancellation, reopening, and a long list. This release does not promise native one-step undo or Navigation/events/tasks integration; verify those behaviors on your device.
 
-#### Single box
-All items are placed in one multi-line text box.
-
-- Enables **H (Highlight/Title)** — lasso the box and tap H to add it to the Navigation panel as a title or keyword
-- Enables **New Event** and **New Task** from the lasso menu
-- The whole list moves and resizes together
-- Use **Format Group** later to change font size or bold
-
-#### Individual items
-Each item gets its own text box, stacked vertically.
-
-- Each item can be moved independently
-- Use **Realign** to snap all items back to the same left edge with consistent spacing after moving them around
-- Use **Format Group** to resize or restyle all items at once
-- Does not support H highlight, New Event, or New Task on the group as a whole
-
-> **Tip:** If you want native Supernote features like events, tasks, or Navigation panel entries, choose **Single box**. If you want to rearrange individual items after inserting, choose **Individual items**.
-
----
-
-## Group Actions
-
-Once a sorted list is on the page, lasso any item in the group and tap the **List Sorter** plugin button. The plugin detects that it created those elements and shows the **Group Panel** instead of the Sort Panel.
-
-### Realign
-Snaps all items in the group to the same left edge and restores even vertical spacing. Useful after you have moved individual items around and want to tidy them up.
-
-*Only available for Individual items output.*
-
-### Format Group
-Changes the font size and bold setting for every item in the group at once, and repositions them with the correct spacing for the new size.
-
-1. Tap **Format Group** to expand the options
-2. Choose a font size and toggle bold
-3. Tap **Apply Format**
-
----
-
-## Tips
-
-- **Original list stays on the page.** The plugin inserts the sorted list as new elements; it does not delete your original recognized text. Delete or move the original manually once you are happy with the result.
-- **Undo.** Use the back arrow (undo) if an insert does not look right. The plugin writes elements in a single operation so one undo removes the whole list.
-- **Borders and backgrounds.** The SDK does not currently support filled backgrounds on text boxes. If you want to visually separate a list from page lines, consider moving it to a blank area of the page.
-- **Writing on top of an H-highlighted list.** Once a single-box list is highlighted with H, the pen input is captured by the text box. This is a platform behavior, not a plugin limitation.
+The historical audit is in `audit/CHAUVET-3.29.43-AUDIT.md`. Its archived failing-version fixtures are evidence, not the release acceptance suite.
